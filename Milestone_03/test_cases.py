@@ -1,6 +1,6 @@
 import time
 from pprint import pprint
-
+from query_generation import generate_cypher
 from intent_and_NER import classify_intent_llm, extract_entities, map_airports_to_codes, airport_code_to_city, process_user_query
 
 
@@ -112,5 +112,8 @@ def test_map_airports_to_codes():
     pprint(mapped_entities)
 
 if __name__ == "__main__":
-    test_map_airports_to_codes()
+    intent, entities = process_user_query("What was the food satisfaction score for flight 5372?")
+    cypher = generate_cypher(intent, entities)
+    print("\nCYPHER:")
+    print(cypher)
 
