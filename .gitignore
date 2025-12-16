@@ -1,1 +1,5 @@
 .idea
+
+.env.local
+
+__pycache__

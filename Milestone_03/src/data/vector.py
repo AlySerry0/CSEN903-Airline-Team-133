@@ -178,9 +178,9 @@ if __name__ == "__main__":
 
     retriever.setup_vector_index(force_rebuild=False)
 
-    results = retriever.search("Flights with bad food", top_k=2)
+    results = retriever.search("Flights with bad food", top_k=20)
 
     for r in results:
-        print(f"Score: {r['score']:.4f} | {r['context'][:100]}...")
+        print(f"Score: {r['score']:.4f} | {r['context']}")
 
     retriever.close()
