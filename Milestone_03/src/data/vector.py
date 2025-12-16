@@ -46,6 +46,16 @@ class JourneyEmbeddingRetriever:
     def close(self):
         self.driver.close()
 
+    def get_active_model(self):
+        """
+        Retrieves the currently active embedding model from the database.
+        Returns None if no model is set.
+        """
+        query = "MATCH (c:SystemConfig {key: 'embedding_model'}) RETURN c.value AS model"
+        with self.driver.session() as session:
+            result = session.run(query).single()
+            return result['model'] if result else None
+
     def setup_vector_index(self, force_rebuild=False):
         """
         Orchestrates the setup: prepares text, embeds, and indexes.
@@ -59,7 +69,18 @@ class JourneyEmbeddingRetriever:
         self._prepare_text_nodes()
         self._generate_and_store_embeddings()
         self._create_index()
+        self._update_system_config()
         print("[SETUP] Complete.\n")
+
+    def _update_system_config(self):
+        """Internal: Updates the SystemConfig node with the current model."""
+        print(f" -> Updating SystemConfig with model: {self.model_name}")
+        query = """
+        MERGE (c:SystemConfig {key: 'embedding_model'})
+        SET c.value = $model, c.updated_at = timestamp()
+        """
+        with self.driver.session() as session:
+            session.run(query, model=self.model_name)
 
     def _prepare_text_nodes(self):
         """Internal: Creates text representation on nodes."""

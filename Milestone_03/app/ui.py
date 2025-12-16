@@ -43,36 +43,101 @@ def get_config():
 
 cm = get_config()
 
-# Initialize Resources
-@st.cache_resource
-def init_resources():
-    # 1. Graph Executor for Baseline
-    executor = GraphExecutor(
-        uri=cm.get("NEO4J_URI"),
-        auth=(cm.get("NEO4J_USERNAME"), cm.get("NEO4J_PASSWORD"))
-    )
-    
-    # 2. Embedding Retriever
-    retriever = JourneyEmbeddingRetriever(
-        uri=cm.get("NEO4J_URI"),
-        user=cm.get("NEO4J_USERNAME"),
-        password=cm.get("NEO4J_PASSWORD"),
-        model_name='BAAI/bge-small-en-v1.5' # Matching what was used in the file
-    )
-    
-    # 3. LLM Experiment Layer
-    llm_exp = GraphRAGExperiment(
-        github_token=cm.get("GITHUB_TOKEN")
-    )
+# ============================================================
+# SIDEBAR CONTROLS (Moved up for Init)
+# ============================================================
+st.sidebar.header("⚙️ Experiment Settings")
+
+from src.data.vector import MODEL_CONFIGS
+
+# Available models from vector configuration
+# We default to the one that was hardcoded: 'BAAI/bge-small-en-v1.5'
+default_model_index = list(MODEL_CONFIGS.keys()).index('BAAI/bge-small-en-v1.5') if 'BAAI/bge-small-en-v1.5' in MODEL_CONFIGS else 0
+
+embedding_model_name = st.sidebar.selectbox(
+    "Embedding Model",
+    options=list(MODEL_CONFIGS.keys()),
+    index=default_model_index,
+    help="Changing this will trigger a full re-indexing of the database."
+)
+
+retrieval_mode = st.sidebar.selectbox(
+    "Retrieval Method",
+    ["Hybrid", "Baseline (Cypher)", "Embeddings"]
+)
+
+# Available models in llm_layer
+llm_model_name = st.sidebar.selectbox(
+    "Primary LLM Model",
+    ["GPT-4o", "DeepSeek-R1", "Phi-4"]
+)
+
+st.sidebar.markdown("---")
+
+# ============================================================
+# RESOURCE INITIALIZATION
+# ============================================================
+@st.cache_resource(show_spinner=False)
+def init_resources(selected_embedding_model):
+    # Use a status container to avoid UI overlapping and provide clear progress
+    with st.status("Initializing Resources...", expanded=True) as status:
+        
+        st.write("🔌 Connecting to Neo4j...")
+        # 1. Graph Executor for Baseline
+        executor = GraphExecutor(
+            uri=cm.get("NEO4J_URI"),
+            auth=(cm.get("NEO4J_USERNAME"), cm.get("NEO4J_PASSWORD"))
+        )
+        
+        # 2. Embedding Retriever
+        # We initialize with the SELECTED model
+        retriever = JourneyEmbeddingRetriever(
+            uri=cm.get("NEO4J_URI"),
+            user=cm.get("NEO4J_USERNAME"),
+            password=cm.get("NEO4J_PASSWORD"),
+            model_name=selected_embedding_model
+        )
+
+        # 3. Check & Setup Embeddings
+        # This logic ensures we are using the correct model in the DB
+        try:
+            active_model = retriever.get_active_model()
+            
+            if active_model != selected_embedding_model:
+                if active_model is None:
+                    st.warning(f"⚠️ Initial Setup: Generating embeddings with {selected_embedding_model}...")
+                else:
+                    st.warning(f"⚠️ Model Changed: Switching from {active_model} to {selected_embedding_model}...")
+                
+                st.write("⚙️ Re-indexing database (this may take a while)...")
+                # Force rebuild
+                retriever.setup_vector_index(force_rebuild=True)
+                st.success("✅ Embedding Setup Complete!")
+            else:
+                st.write("✅ Embeddings are up to date.")
+                
+        except Exception as e:
+             st.error(f"Error during embedding setup: {e}")
+             # We continue, but retrieval might fail
+        
+        # 4. LLM Experiment Layer
+        llm_exp = GraphRAGExperiment(
+            github_token=cm.get("GITHUB_TOKEN")
+        )
+        
+        status.update(label="System Ready", state="complete", expanded=False)
     
     return executor, retriever, llm_exp
 
 try:
-    executor, retriever, llm_exp = init_resources()
+    # Pass the user's selection to the init function
+    # Because it's cached, changing the arg will re-run it!
+    executor, retriever, llm_exp = init_resources(embedding_model_name)
+    st.sidebar.info(f"System Status:\n\nNeo4j: {'🟢 Online' if executor.verify_connection() else '🔴 Offline'}")
+
 except Exception as e:
     st.error(f"Failed to initialize resources: {e}")
     st.stop()
-
 
 # ============================================================
 # PIPELINE EXECUTION
@@ -179,25 +244,6 @@ def run_real_graph_rag(
     return results
 
 # ============================================================
-# SIDEBAR CONTROLS
-# ============================================================
-st.sidebar.header("⚙️ Experiment Settings")
-
-retrieval_mode = st.sidebar.selectbox(
-    "Retrieval Method",
-    ["Hybrid", "Baseline (Cypher)", "Embeddings"]
-)
-
-# Available models in llm_layer: GPT-4o, DeepSeek-R1, Phi-4
-model_name = st.sidebar.selectbox(
-    "Primary LLM Model",
-    ["GPT-4o", "DeepSeek-R1", "Phi-4"]
-)
-
-st.sidebar.markdown("---")
-st.sidebar.info(f"System Status:\n\nNeo4j: {'🟢 Online' if executor.verify_connection() else '🔴 Offline'}")
-
-# ============================================================
 # MAIN INPUT
 # ============================================================
 # --- Prepared Questions ---
@@ -249,7 +295,7 @@ if run_clicked:
                 result = run_real_graph_rag(
                     query=query,
                     retrieval_mode=retrieval_mode,
-                    model_name=model_name
+                    model_name=llm_model_name
                 )
 
                 col1, col2 = st.columns(2)
@@ -259,7 +305,7 @@ if run_clicked:
                     st.subheader("🔗 Knowledge Graph Context")
                     
                     if retrieval_mode in ["Baseline (Cypher)", "Hybrid"]:
-                        with st.expander(f"� Baseline Results ({len(result['kg_context']['baseline_records'])})"):
+                        with st.expander(f" Baseline Results ({len(result['kg_context']['baseline_records'])})"):
                             st.json(result['kg_context']['baseline_records'])
 
                     if retrieval_mode in ["Embeddings", "Hybrid"]:
@@ -290,7 +336,7 @@ if run_clicked:
                 st.markdown("---")
 
                 # ---------------- FINAL ANSWER ----------------
-                st.subheader(f"✅ Final Answer ({model_name})")
+                st.subheader(f"✅ Final Answer ({llm_model_name})")
                 st.markdown(result["llm_answer"])
                 
             except Exception as e:
